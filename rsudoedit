@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+
+# Remote edit file requiring root access.
+# Works best if using key authentication.
+# Usage: rsudoedit <server> <remote-file>
+# remote-file should be absolute path
+
+# check number of argument
+print_usage() {
+    echo "Usage: rsudoedit <server> <remote-file>";
+    echo "Parameters:"
+    printf "\tserver: remote server (e.g, 155.154.153.152)"
+    printf "\tremote-file: should be an absolute path (e.g, /var/log/test)";
+}
+
+if [ $# -ne 2 ];then
+    print_usage
+    exit 1
+fi
+
+host="$1"
+filepath="$2"
+username="santatra"
+
+# check editor
+editor="$(which nvim)"
+status_nvim=$?;
+if [ $status_nvim -ne 0 ];then
+    editor="$(which vim)"
+fi
+
+bname="$(basename "$filepath")"
+remote_temp="/home/santatra/temp_sudoedit"
+
+# copying root file to remote temp
+# and getting remote temp
+echo "Getting '$filepath' ..."
+ssh "$host" -t "sudo cp '$filepath' '$remote_temp' && \
+    sudo chown santatra:santatra '$remote_temp'"
+ls=$?
+if [ $ls -ne 0 ]; then
+    exit $ls
+fi
+
+# saving remote temp to local temp
+echo "Creating temp file ...";
+local_temp="$(mktemp --suffix ".$bname")";
+
+scp "${host}":${remote_temp} "$local_temp" 1>/dev/null
+scp_stat=$?; 
+if [ $scp_stat -ne 0 ];then
+    echo "Command scp ${host}:${remote_temp} $local_temp error ...";
+    exit 1;
+fi
+
+# editing local temp
+echo "Opening file with $editor ..."
+$editor "$local_temp";
+
+# copying local temp to remote temp
+echo "Copying the file you just modified to ${host}:${remote_temp} ...";
+scp "$local_temp" "${host}":"${remote_temp}" 1>/dev/null
+ls=$?
+if [ $ls -ne 0 ]; then
+    exit $ls
+fi
+
+# copying remote temp to root file and deleting remote temp
+echo "Handling last remote operations ..."
+ssh "$host" -t "sudo cp $remote_temp $filepath && rm $remote_temp";
+
+exit 0;
