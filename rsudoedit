@@ -43,8 +43,8 @@ if [ $ls -ne 0 ]; then
 fi
 
 # saving remote temp to local temp
-echo "Creating temp file ...";
 local_temp="$(mktemp --suffix ".$bname")";
+echo "Local temp file: $local_temp"
 
 scp "${host}":${remote_temp} "$local_temp" 1>/dev/null
 scp_stat=$?; 
