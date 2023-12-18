@@ -7,20 +7,11 @@
 
 # check number of argument
 print_usage() {
-    echo "Usage: rsudoedit <server> <remote-file>";
-    echo "Parameters:"
-    printf "\tserver: remote server (e.g, 155.154.153.152)"
-    printf "\tremote-file: should be an absolute path (e.g, /var/log/test)";
+    printf "Usage:\n\trsudoedit SERVER REMOTE-FILE [REMOTEFILE ...]\n";
+    printf "\nParameters:\n"
+    printf "\tSERVER: \tremote server (e.g, 155.154.153.152)\n"
+    printf "\tREMOTEFILE: \tabsolute path to file on the remote host (e.g, /var/log/test)\n";
 }
-
-if [ $# -ne 2 ];then
-    print_usage
-    exit 1
-fi
-
-host="$1"
-filepath="$2"
-username="santatra"
 
 # check editor
 editor="$(which nvim)"
@@ -29,44 +20,88 @@ if [ $status_nvim -ne 0 ];then
     editor="$(which vim)"
 fi
 
-bname="$(basename "$filepath")"
-remote_temp="/home/santatra/temp_sudoedit"
+if [ $# -lt 2 ];then
+    print_usage
+    exit 1
+fi
 
-# copying root file to remote temp
+host="$1"; shift; # exract host from the list of arguments
+username="santatra"
+
+full_filenames=$*
+
+# filenames: contains all the name of the file (obtained by basename)
+filenames=()
+
+# filedirs: contains the full path of each file (obtained by dirname)
+# the element in the i-th index of filedirs is the full path of the file in the i-th index of full_filenames
+filedirs=()
+
+# get length of full_filenames
+len=${#full_filenames[@]}
+
+for full_filename in $full_filenames; do
+    bs=$(basename "$full_filename")
+    filenames+=("$bs")
+done
+
+for full_filename in $full_filenames; do
+    cr=$(realpath "$full_filename")
+    cd=$(dirname "$cr")
+    filedirs+=("$cd")
+done
+
+bname="$username"
+remote_temp="/home/$username/temp_sudoedit"
+
+# Copying root files' full path to remote temp
 # and getting remote temp
-echo "Getting '$filepath' ..."
-ssh "$host" -t "sudo cp '$filepath' '$remote_temp' && \
-    sudo chown santatra:santatra '$remote_temp'"
+# and get the dirname of each full_filename
+echo "*** Connecting to $host ... "
+ssh "${username}@${host}" -t "mkdir -p $remote_temp && \
+    cp "$full_filenames" $remote_temp && \
+    sudo chown -R $username:$username '$remote_temp'"
 ls=$?
 if [ $ls -ne 0 ]; then
+    echo "*** Error: $ls"
     exit $ls
 fi
 
 # saving remote temp to local temp
-local_temp="$(mktemp --suffix ".$bname")";
-echo "Local temp file: $local_temp"
+local_temp="$(mktemp --directory --suffix ".$bname")";
+rsync -a $username@"$host":${remote_temp}/ "$local_temp/" 1>/dev/null
 
-scp "${host}":${remote_temp} "$local_temp" 1>/dev/null
-scp_stat=$?; 
-if [ $scp_stat -ne 0 ];then
-    echo "Command scp ${host}:${remote_temp} $local_temp error ...";
+# handle error
+rsync_stat=$?; 
+if [ $rsync_stat -ne 0 ];then
+    echo "Cannot copy to your local temporary directory: $local_temp";
     exit 1;
 fi
 
 # editing local temp
 echo "Opening file with $editor ..."
-$editor "$local_temp";
+$editor "$local_temp/";
 
 # copying local temp to remote temp
-echo "Copying the file you just modified to ${host}:${remote_temp} ...";
-scp "$local_temp" "${host}":"${remote_temp}" 1>/dev/null
+echo "Copying the files you just modified to ${host}:${remote_temp} ...";
+rsync -av "$local_temp/" "${host}":"${remote_temp}/" 1>/dev/null
 ls=$?
 if [ $ls -ne 0 ]; then
+    echo "Cannot copy to remote temporary directory: $remote_temp";
+    echo "Exit code: $ls"
     exit $ls
 fi
 
-# copying remote temp to root file and deleting remote temp
-echo "Handling last remote operations ..."
-ssh "$host" -t "sudo cp $remote_temp $filepath && rm $remote_temp";
+# copying remote temp's content to their specific root files and deleting remote temp
+cmd="echo \"Begin\""
+i=0
+for filename in  "${filenames[@]}"
+do
+    cmd="$cmd && sudo rsync -av $remote_temp/${filename} ${filedirs[$i]}"
+    i+=1
+done
 
+ssh "$host" -t "$cmd && rm -r $remote_temp";
+
+echo "Success !"
 exit 0;
